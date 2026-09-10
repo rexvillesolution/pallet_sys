@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-<!-- [全螢幕關鍵設定] 隱藏 Android / iOS 頂部網址列與狀態欄 -->
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -36,6 +35,7 @@
   .btn-danger { background: var(--danger); }
   .btn-warning { background: var(--warning); color: #fff; }
   .btn-purple { background: #7c3aed; }
+  .btn-dark { background: #334155; }
   .btn-outline { background: #fff; color: var(--text-main); border: 1px solid var(--border); }
   .btn-outline:hover { background: #f8fafc; }
   .btn-sm { padding: 8px 12px; font-size: 14px; }
@@ -86,11 +86,13 @@
 
 <div class="app-container">
   <div class="top-bar">
-    <div class="top-title"><span>📦 FBA Packing & Picking System</span></div>
+    <div class="top-title"><span>📦 FBA Packing & Picking</span></div>
     <div class="top-actions">
+      <!-- 真正的全螢幕按鈕 -->
+      <button class="btn-dark" onclick="toggleFullscreen()">⛶ 全螢幕</button>
       <input type="file" id="orderFileInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importOrderFile(event)">
-      <button class="btn-outline" onclick="document.getElementById('orderFileInput').click()">📥 Import Order</button>
-      <button class="btn-purple" onclick="printPickingList()">🖨️ Print Pick List</button>
+      <button class="btn-outline" onclick="document.getElementById('orderFileInput').click()">📥 Import</button>
+      <button class="btn-purple" onclick="printPickingList()">🖨️ Pick List</button>
       <button class="btn-success" onclick="exportAllPallets()">📊 Export All</button>
     </div>
   </div>
@@ -99,7 +101,6 @@
 
   <div class="scanner-card">
     <div class="scanner-row">
-      <!-- inputmode="none" 確保不彈出虛擬鍵盤 -->
       <input type="text" inputmode="none" id="barcodeInput" class="scan-input" placeholder="Scan SKU / Carton..." autocomplete="off" autofocus onkeydown="if(event.key === 'Enter'){ handleScan(); }">
       <button onclick="handleScan()">Submit</button>
     </div>
@@ -148,6 +149,19 @@ let pallets = { 1: {} };
 let activePalletId = 1;
 let pickingListData = [];
 let audioContext = null;
+
+// [全螢幕切換函數]
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(err => {
+      alert(`進入全螢幕失敗: ${err.message}`);
+    });
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    }
+  }
+}
 
 function initAudio() { if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)(); }
 function playBeep(type) {
