@@ -40,7 +40,7 @@
 
   .scanner-card { background: var(--card-bg); padding: 14px 16px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 8px; }
   .scanner-row { display: flex; gap: 8px; }
-  .scan-input { flex: 1; font-size: 16px; padding: 12px 14px; border: 2px solid var(--primary); border-radius: 6px; outline: none; background: #f8fafc; font-weight: 600; }
+  .scan-input { flex: 1; font-size: 16px; padding: 12px 14px; border: 2px solid var(--primary); border-radius: 6px; outline: none; background: #f8fafc; font-weight: 600; transition: border-color 0.2s, background-color 0.2s; }
   .scan-input:focus { background: #ffffff; border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
   .scan-meta-bar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
 
@@ -99,7 +99,6 @@
       <div class="panel-header">
         <div><span class="panel-title">🪵 Current Pallet</span><span style="font-size:12px; color:var(--text-muted); margin-left:6px;"> (<span id="palletCartonCount">0</span> cartons)</span></div>
         <div style="display:flex; gap:6px;">
-          <!-- 需求2: LOCK 按鈕放在 + New Pallet 左手邊 -->
           <button id="lockPalletBtn" class="btn-outline btn-sm" onclick="toggleLockCurrentPallet()">🔒 Lock Pallet</button>
           <button class="btn-success btn-sm" onclick="createNewPallet()">+ New Pallet</button>
         </div>
@@ -131,7 +130,7 @@
 <script>
 let orderData = {}; 
 let pallets = { 1: {} }; 
-let palletLocks = {}; // 記錄各卡板的鎖定狀態: { 1: false, 2: true, ... }
+let palletLocks = {}; 
 let activePalletId = 1;
 let pickingListData = []; 
 let audioContext = null;
@@ -188,7 +187,12 @@ function importOrderFile(event) {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
       
-      let targetSheetName = workbook.SheetNames.includes("原箱子详情") ? "原箱子详情" : (workbook.SheetNames.includes("装箱详情信息") ? "装箱详情信息" : workbook.SheetNames[0]);
+      // 支援中英文 Sheet Name 尋找
+      let targetSheetName = workbook.SheetNames.find(s => 
+        s === "原箱子详情" || s === "Original box details" || 
+        s === "装箱详情信息" || s === "Box packing details"
+      ) || workbook.SheetNames[0];
+
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheetName]);
 
       if (!rows || rows.length === 0) return showBanner("No data found.", "error");
@@ -197,12 +201,13 @@ function importOrderFile(event) {
       let tempPickMap = {};
 
       rows.forEach(r => {
-        const sku = (r['商品编码'] || r['SKU'] || r['Item Code']).toString().trim();
-        const boxNo = (r['箱号'] || r['Carton No'] || '').toString().trim();
-        const name = (r['产品名称'] || r['Product Name'] || '').toString().trim();
-        let locStr = (r['库位'] || r['Location'] || '').toString().trim();
+        // 支援中英文欄位名稱提取
+        const sku = (r['商品编码'] || r['Product Barcode'] || r['SKU'] || r['Item Code'] || '').toString().trim();
+        const boxNo = (r['箱号'] || r['Box Code'] || r['箱序号'] || r['Box Num'] || r['Carton No'] || '').toString().trim();
+        const name = (r['产品名称'] || r['Product Title'] || r['Product Name'] || '').toString().trim();
+        let locStr = (r['库位'] || r['Location Code'] || r['Location'] || '').toString().trim();
         
-        const rawQty = r['产品数量'] || r['数量'] || r['Qty'] || 1;
+        const rawQty = r['产品数量'] || r['Quantity'] || r['数量'] || r['Qty'] || 1;
         const pieceQty = parseInt(rawQty, 10) || 1; 
         const ctnQty = boxNo ? 1 : pieceQty; 
 
@@ -215,14 +220,19 @@ function importOrderFile(event) {
         if (boxNo) orderData[sku].boxNumbers.add(boxNo);
       });
 
+      // 解析 Picking List 的庫位數量，相容中英文換行格式
       for (const sku in orderData) {
         const data = orderData[sku];
-        let locStr = data.rawLoc.replace(/库位：/g, '').trim();
+        // 清除中英文的 Label 字樣
+        let locStr = data.rawLoc.replace(/库位：/g, '').replace(/Location:/g, '').trim();
         
-        if (locStr && locStr.includes('产品数：')) {
+        if (locStr && (locStr.includes('产品数：') || locStr.includes('Number of products:'))) {
           locStr.split('\n').forEach(p => {
             if (p.includes('产品数：')) {
               let [loc, l_qty] = p.split('产品数：');
+              addPickingItem(tempPickMap, sku, data.name, loc.trim(), parseInt(l_qty.trim(), 10));
+            } else if (p.includes('Number of products:')) {
+              let [loc, l_qty] = p.split('Number of products:');
               addPickingItem(tempPickMap, sku, data.name, loc.trim(), parseInt(l_qty.trim(), 10));
             } else if (p.trim()) {
               addPickingItem(tempPickMap, sku, data.name, p.trim(), 0);
@@ -300,7 +310,6 @@ function handleScan() {
   const input = document.getElementById('barcodeInput'); const scanned = input.value.trim(); input.value = ''; 
   if (!scanned) return; if (Object.keys(orderData).length === 0) return showBanner("Please import order file!", "error");
   
-  // 需求2防護: 若當前板位被鎖定，禁止掃描放入
   if (palletLocks[activePalletId]) {
     return showBanner(`Pallet #${activePalletId} is LOCKED! Unlock it first to pack.`, "error");
   }
@@ -329,7 +338,6 @@ function handleScan() {
   }
 }
 
-// 需求2: 切換當前卡板鎖定狀態
 function toggleLockCurrentPallet() {
   palletLocks[activePalletId] = !palletLocks[activePalletId];
   updateLockBtnState();
@@ -464,7 +472,6 @@ function verifyCompletion() {
   if (missing > 0) showBanner(`${missing} cartons remaining!`, "error"); else showBanner(`All cartons packed!`, "success");
 }
 
-// 需求1: 在 Pallet 標題旁顯示該卡板總數 (Total: X)
 function exportAllPallets() {
   const palletIds = Object.keys(pallets).map(Number).sort((a, b) => a - b);
   let hasData = false;
@@ -486,12 +493,9 @@ function exportAllPallets() {
   }
 
   palletIds.forEach((id, pIndex) => {
-    const colStart = pIndex * 3; // 每個卡板佔用 2 欄 (SKU, Qty) + 1 欄間隔空列
-    
-    // 計算該板總箱數
+    const colStart = pIndex * 3; 
     const palletTotalBoxes = Object.values(pallets[id] || {}).reduce((a, b) => a + b, 0);
 
-    // 需求1: 顯示例如 Pallet #1 (Total: 25)
     aoa[0][colStart] = `Pallet #${id} (Total: ${palletTotalBoxes})`;
     aoa[0][colStart + 1] = "";
     aoa[0][colStart + 2] = "";
