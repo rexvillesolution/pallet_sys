@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>FBA Pallet & Picking System (PDA Optimized)</title>
+
+<!-- [全螢幕關鍵設定] 隱藏 Android / iOS 頂部網址列與狀態欄 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#2563eb">
+
+<title>FBA Pallet & Picking System</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <style>
   :root {
@@ -16,7 +23,6 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   
-  /* [PDA優化] 放大基礎字體，減少外邊距 */
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 6px; font-size: 16px; line-height: 1.4; }
   .app-container { max-width: 1440px; margin: 0 auto; }
   
@@ -24,7 +30,6 @@
   .top-title { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; color: var(--primary); }
   .top-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-  /* [PDA優化] 放大按鈕，方便配戴手套點擊 */
   button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 18px; font-size: 16px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s ease; white-space: nowrap; color: #fff; background: var(--primary); touch-action: manipulation; }
   button:hover { opacity: 0.92; }
   .btn-success { background: var(--success); }
@@ -33,17 +38,14 @@
   .btn-purple { background: #7c3aed; }
   .btn-outline { background: #fff; color: var(--text-main); border: 1px solid var(--border); }
   .btn-outline:hover { background: #f8fafc; }
-  /* [PDA優化] 放大次要按鈕 */
   .btn-sm { padding: 8px 12px; font-size: 14px; }
 
   #notificationBanner { display: none; padding: 12px 16px; border-radius: 8px; font-size: 14px; font-weight: 700; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
   .alert-error { background: #fee2e2; color: var(--danger); border: 1px solid #f87171; }
   .alert-success { background: #dcfce7; color: var(--success); border: 1px solid #86efac; }
 
-  /* [PDA優化] 掃描區塊永遠固定在最上方，不會被滾動遮擋 */
   .scanner-card { background: var(--card-bg); padding: 14px 16px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 8px; position: sticky; top: 0; z-index: 100; border-bottom: 2px solid var(--primary); }
   .scanner-row { display: flex; gap: 8px; }
-  /* [PDA優化] 放大輸入框 */
   .scan-input { flex: 1; font-size: 18px; padding: 14px 16px; border: 2px solid var(--primary); border-radius: 6px; outline: none; background: #f8fafc; font-weight: 600; }
   .scan-input:focus { background: #ffffff; border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
   .scan-meta-bar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
@@ -62,7 +64,6 @@
   
   .table-wrapper { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
-  /* [PDA優化] 增加表格行高 */
   th, td { padding: 12px 10px; border-bottom: 1px solid var(--border); }
   th { background: #f8fafc; position: sticky; top: 0; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid var(--border); z-index: 1; }
   tr:hover td { background: #f8fafc; }
@@ -70,7 +71,6 @@
   .badge-complete { background: #dcfce7; color: #166534; }
   .badge-pending { background: #fef3c7; color: #92400e; }
 
-  /* [PDA優化] 螢幕寬度優化：隱藏佔空間的產品名稱，避免表格橫向超出 */
   @media (max-width: 768px) {
     #orderTable th:nth-child(2), 
     #orderTable td:nth-child(2),
@@ -99,7 +99,7 @@
 
   <div class="scanner-card">
     <div class="scanner-row">
-      <!-- [PDA優化] 加入 inputmode="none" 避免彈出虛擬鍵盤 -->
+      <!-- inputmode="none" 確保不彈出虛擬鍵盤 -->
       <input type="text" inputmode="none" id="barcodeInput" class="scan-input" placeholder="Scan SKU / Carton..." autocomplete="off" autofocus onkeydown="if(event.key === 'Enter'){ handleScan(); }">
       <button onclick="handleScan()">Submit</button>
     </div>
@@ -377,16 +377,13 @@ function exportAllPallets() {
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Summary"); XLSX.writeFile(wb, "All_Pallets_Packing.xlsx");
 }
 
-// [PDA優化] 全局點擊攔截，確保條碼輸入框永遠有焦點
 document.addEventListener('click', function(e) {
   const input = document.getElementById('barcodeInput');
-  // 如果點擊的不是按鈕、輸入框，則將焦點拉回掃描框
   if(e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'A') {
     input.focus();
   }
 });
 
-// [PDA優化] 頁面載入完成後立刻對焦
 window.onload = function() {
   document.getElementById('barcodeInput').focus();
 };
