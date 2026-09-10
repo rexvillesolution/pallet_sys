@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FBA Pallet & Picking System</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --primary: #2563eb; --primary-hover: #1d4ed8;
+    --danger: #dc2626; --danger-hover: #b91c1c;
+    --success: #16a34a; --success-hover: #15803d;
+    --warning: #d97706; --bg: #f1f5f9;
+    --card-bg: #ffffff; --text-main: #0f172a;
+    --text-muted: #64748b; --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 12px; font-size: 14px; line-height: 1.4; }
+  .app-container { max-width: 1440px; margin: 0 auto; }
+  
+  .top-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; background: var(--card-bg); padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .top-title { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; color: var(--primary); }
+  .top-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s ease; white-space: nowrap; color: #fff; background: var(--primary); touch-action: manipulation; }
+  button:hover { opacity: 0.92; }
+  .btn-success { background: var(--success); }
+  .btn-danger { background: var(--danger); }
+  .btn-warning { background: var(--warning); color: #fff; }
+  .btn-purple { background: #7c3aed; }
+  .btn-dark { background: #1e293b; }
+  .btn-dark:hover { background: #0f172a; }
+  .btn-outline { background: #fff; color: var(--text-main); border: 1px solid var(--border); }
+  .btn-outline:hover { background: #f8fafc; }
+  .btn-sm { padding: 4px 8px; font-size: 12px; }
+
+  #notificationBanner { display: none; padding: 12px 16px; border-radius: 8px; font-size: 14px; font-weight: 700; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+  .alert-error { background: #fee2e2; color: var(--danger); border: 1px solid #f87171; }
+  .alert-success { background: #dcfce7; color: var(--success); border: 1px solid #86efac; }
+
+  .scanner-card { background: var(--card-bg); padding: 14px 16px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; flex-direction: column; gap: 8px; }
+  .scanner-row { display: flex; gap: 8px; }
+  .scan-input { flex: 1; font-size: 16px; padding: 12px 14px; border: 2px solid var(--primary); border-radius: 6px; outline: none; background: #f8fafc; font-weight: 600; }
+  .scan-input:focus { background: #ffffff; border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
+  .scan-meta-bar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+
+  .main-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 960px) { .main-grid { grid-template-columns: 1fr 1fr; gap: 16px; } }
+
+  .panel-card { background: var(--card-bg); border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; flex-direction: column; }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .panel-title { font-size: 15px; font-weight: 700; }
+
+  .pallet-tabs-container { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 10px; }
+  .pallet-tab { display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; user-select: none; }
+  .pallet-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .pallet-tab .tab-close-btn { background: transparent; border: none; color: inherit; font-size: 14px; line-height: 1; padding: 2px 4px; margin-left: 4px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+  
+  .table-wrapper { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { background: #f8fafc; position: sticky; top: 0; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid var(--border); z-index: 1; }
+  tr:hover td { background: #f8fafc; }
+  .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .badge-complete { background: #dcfce7; color: #166534; }
+  .badge-pending { background: #fef3c7; color: #92400e; }
+</style>
+</head>
+<body>
+
+<div class="app-container">
+  <div class="top-bar">
+    <div class="top-title"><span>📦 FBA Packing & Picking System</span></div>
+    <div class="top-actions">
+      <!-- 新增 Full Screen 按鈕 -->
+      <button class="btn-dark" onclick="toggleFullScreen()">⛶ Full Screen</button>
+      <input type="file" id="orderFileInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importOrderFile(event)">
+      <button class="btn-outline" onclick="document.getElementById('orderFileInput').click()">📥 Import Order Excel</button>
+      <button class="btn-purple" onclick="printPickingList()">🖨️ Print Picking List</button>
+      <button class="btn-success" onclick="exportAllPallets()">📊 Export All Pallets</button>
+    </div>
+  </div>
+
+  <div id="notificationBanner"></div>
+
+  <div class="scanner-card">
+    <div class="scanner-row">
+      <input type="text" id="barcodeInput" class="scan-input" placeholder="Scan SKU or Carton Barcode here..." autocomplete="off" autofocus onkeydown="if(event.key === 'Enter'){ handleScan(); }">
+      <button onclick="handleScan()">Submit</button>
+    </div>
+    <div class="scan-meta-bar">
+      <span>Active Pallet: <b id="activePalletLabel" style="color:var(--primary);">Pallet #1</b></span>
+      <span>Progress: <b id="packedOverview">0 / 0 Cartons</b></span>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div class="panel-card">
+      <div class="panel-header">
+        <div><span class="panel-title">🪵 Current Pallet</span><span style="font-size:12px; color:var(--text-muted); margin-left:6px;"> (<span id="palletCartonCount">0</span> cartons)</span></div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-outline btn-sm" onclick="exportCurrentPallet()">Export</button>
+          <button class="btn-success btn-sm" onclick="createNewPallet()">+ New Pallet</button>
+        </div>
+      </div>
+      <div class="pallet-tabs-container" id="palletTabsContainer"></div>
+      <div class="table-wrapper">
+        <table id="palletTable">
+          <thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:center;">Qty (Ctn)</th><th style="text-align:center;">Action</th></tr></thead>
+          <tbody id="palletTableBody"><tr><td colspan="4" style="text-align:center; color:var(--text-muted);">This pallet is empty. Scan barcodes to pack.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-header">
+        <div><span class="panel-title">📋 Order SKU Summary</span><span style="font-size:12px; color:var(--text-muted); margin-left:6px;"> (<span id="totalPackedSum">0</span> / <span id="totalTargetSum">0</span> Cartons)</span></div>
+        <div><button class="btn-warning btn-sm" onclick="verifyCompletion()">Verify Completion</button></div>
+      </div>
+      <div class="table-wrapper">
+        <table id="orderTable">
+          <thead><tr><th>SKU</th><th>Product Name</th><th style="text-align:center;">Ordered</th><th style="text-align:center;">Packed</th><th style="text-align:center;">Rem.</th><th style="text-align:center;">Status</th></tr></thead>
+          <tbody id="orderTableBody"><tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Please import order Excel to begin.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let orderData = {}; 
+let pallets = { 1: {} }; 
+let activePalletId = 1;
+let pickingListData = []; 
+let audioContext = null;
+
+// 切換全螢幕邏輯（相容 Android Chrome 與 WebKit）
+function toggleFullScreen() {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    const docEl = document.documentElement;
+    if (docEl.requestFullscreen) {
+      docEl.requestFullscreen().catch(() => {});
+    } else if (docEl.webkitRequestFullscreen) {
+      docEl.webkitRequestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
+}
+
+function initAudio() { if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)(); }
+function playBeep(type) {
+  try {
+    initAudio(); if (audioContext.state === 'suspended') audioContext.resume();
+    const osc = audioContext.createOscillator(), gain = audioContext.createGain();
+    osc.connect(gain); gain.connect(audioContext.destination);
+    if (type === 'success') { osc.type = 'sine'; osc.frequency.setValueAtTime(900, audioContext.currentTime); gain.gain.setValueAtTime(0.15, audioContext.currentTime); osc.start(); osc.stop(audioContext.currentTime + 0.12); } 
+    else { osc.type = 'sawtooth'; osc.frequency.setValueAtTime(280, audioContext.currentTime); gain.gain.setValueAtTime(0.4, audioContext.currentTime); osc.start(); osc.stop(audioContext.currentTime + 0.55); }
+  } catch (err) {}
+}
+
+function showBanner(message, type = 'error') {
+  const banner = document.getElementById('notificationBanner');
+  banner.className = type === 'error' ? 'alert-error' : 'alert-success';
+  banner.innerHTML = `<span>⚠️ ${message}</span>`;
+  banner.style.display = 'block';
+  playBeep(type);
+  const input = document.getElementById('barcodeInput');
+  input.focus(); input.select();
+}
+
+function importOrderFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      
+      let targetSheetName = workbook.SheetNames.includes("原箱子详情") ? "原箱子详情" : (workbook.SheetNames.includes("装箱详情信息") ? "装箱详情信息" : workbook.SheetNames[0]);
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheetName]);
+
+      if (!rows || rows.length === 0) return showBanner("No data found.", "error");
+
+      orderData = {}; pallets = { 1: {} }; activePalletId = 1; pickingListData = [];
+      let tempPickMap = {};
+
+      // 1. Calculate precise SKU carton counts and save exactly ONE raw location string per SKU
+      rows.forEach(r => {
+        const sku = (r['商品编码'] || r['SKU'] || r['Item Code']).toString().trim();
+        const boxNo = (r['箱号'] || r['Carton No'] || '').toString().trim();
+        const name = (r['产品名称'] || r['Product Name'] || '').toString().trim();
+        let locStr = (r['库位'] || r['Location'] || '').toString().trim();
+        
+        const rawQty = r['产品数量'] || r['数量'] || r['Qty'] || 1;
+        const pieceQty = parseInt(rawQty, 10) || 1; 
+        const ctnQty = boxNo ? 1 : pieceQty; 
+
+        if (!sku) return;
+
+        if (!orderData[sku]) {
+          orderData[sku] = { name: name, targetQty: 0, packedQty: 0, boxNumbers: new Set(), rawLoc: locStr };
+        }
+        orderData[sku].targetQty += ctnQty;
+        if (boxNo) orderData[sku].boxNumbers.add(boxNo);
+      });
+
+      // 2. Parse the location string once per SKU for the Picking List
+      for (const sku in orderData) {
+        const data = orderData[sku];
+        let locStr = data.rawLoc.replace(/库位：/g, '').trim();
+        
+        if (locStr && locStr.includes('产品数：')) {
+          locStr.split('\n').forEach(p => {
+            if (p.includes('产品数：')) {
+              let [loc, l_qty] = p.split('产品数：');
+              addPickingItem(tempPickMap, sku, data.name, loc.trim(), parseInt(l_qty.trim(), 10));
+            } else if (p.trim()) {
+              addPickingItem(tempPickMap, sku, data.name, p.trim(), 0);
+            }
+          });
+        } else {
+          addPickingItem(tempPickMap, sku, data.name, locStr || 'N/A', data.targetQty);
+        }
+      }
+
+      pickingListData = Object.values(tempPickMap).sort((a, b) => {
+        if (a.sku === b.sku) return a.loc.localeCompare(b.loc);
+        return a.sku.localeCompare(b.sku);
+      });
+
+      renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+      showBanner(`Imported Data. Ready to pack!`, "success");
+    } catch (err) { showBanner("Parse error: " + err.message, "error"); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function addPickingItem(map, sku, name, loc, qty) {
+  let key = sku + "||" + loc;
+  if (!map[key]) map[key] = { sku: sku, name: name, loc: loc, qty: 0 };
+  map[key].qty += qty;
+}
+
+function printPickingList() {
+  if (pickingListData.length === 0) return showBanner("No data available to print. Import Excel first.", "error");
+
+  let printWindow = window.open('', '_blank');
+  let d = new Date(); let dateStr = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,'0') + "-" + String(d.getDate()).padStart(2,'0');
+  
+  let html = `
+    <html><head><title>FBA Picking List</title>
+    <style>
+      @page { size: A4; margin: 15mm; }
+      body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #111; }
+      h2 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; text-transform: uppercase; }
+      table { width: 100%; border-collapse: collapse; font-size: 11pt; margin-top: 15px; }
+      th, td { border: 1px solid #666; padding: 8px; text-align: left; }
+      th { background-color: #f4f4f4; }
+      .text-center { text-align: center; } .text-right { text-align: right; }
+    </style></head><body>
+      <h2>FBA Picking List</h2>
+      <div style="font-weight:bold; font-size:11pt;">Date: ${dateStr}</div>
+      <table>
+        <thead><tr><th class="text-center" style="width:5%">NO.</th><th style="width:25%">Product Code (SKU)</th><th style="width:40%">Product Name</th><th style="width:15%">Location</th><th class="text-center" style="width:15%">Quantity</th></tr></thead>
+        <tbody>
+  `;
+
+  let totalQty = 0;
+  pickingListData.forEach((item, i) => {
+    totalQty += item.qty;
+    html += `<tr><td class="text-center">${i+1}</td><td>${item.sku}</td><td>${item.name}</td><td>${item.loc}</td><td class="text-center"><b>${item.qty}</b></td></tr>`;
+  });
+
+  html += `</tbody><tfoot><tr><td colspan="4" class="text-right"><strong>Total:</strong></td><td class="text-center"><strong>${totalQty}</strong></td></tr></tfoot></table></body></html>`;
+
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => { printWindow.print(); }, 300);
+}
+
+function resolveSku(input) {
+  let clean = input.trim(); if (orderData[clean]) return clean;
+  for (const sku in orderData) { if (orderData[sku].boxNumbers.has(clean)) return sku; }
+  return null;
+}
+
+function handleScan() {
+  const input = document.getElementById('barcodeInput'); const scanned = input.value.trim(); input.value = ''; 
+  if (!scanned) return; if (Object.keys(orderData).length === 0) return showBanner("Please import order file!", "error");
+  const sku = resolveSku(scanned);
+  if (!sku) return showBanner(`Unrecognized barcode: "${scanned}"`, "error");
+  
+  const item = orderData[sku];
+  if (item.packedQty >= item.targetQty) return showBanner(`OVER-SCAN! SKU ${sku} is FULL!`, "error");
+
+  item.packedQty++; if (!pallets[activePalletId]) pallets[activePalletId] = {};
+  pallets[activePalletId][sku] = (pallets[activePalletId][sku] || 0) + 1;
+  showBanner(`Added 1 carton: ${sku}`, "success");
+  renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+}
+
+function createNewPallet() {
+  const nextId = Object.keys(pallets).length > 0 ? Math.max(...Object.keys(pallets).map(Number)) + 1 : 1;
+  pallets[nextId] = {}; activePalletId = nextId; renderPalletTabs(); renderCurrentPalletTable();
+}
+
+function selectPallet(id) { activePalletId = id; renderPalletTabs(); renderCurrentPalletTable(); document.getElementById('barcodeInput').focus(); }
+
+function deletePallet(id, event) {
+  event.stopPropagation();
+  const count = Object.values(pallets[id] || {}).reduce((s, q) => s + q, 0);
+  if (count > 0) return showBanner(`Pallet #${id} is not empty!`, "error");
+  if (Object.keys(pallets).length <= 1) return showBanner(`Cannot delete last pallet.`, "error");
+  delete pallets[id]; if (activePalletId === id) activePalletId = Number(Object.keys(pallets)[0]);
+  renderPalletTabs(); renderCurrentPalletTable();
+}
+
+function renderPalletTabs() {
+  const container = document.getElementById('palletTabsContainer'); container.innerHTML = '';
+  Object.keys(pallets).map(Number).sort((a,b)=>a-b).forEach(id => {
+    const totalBoxes = Object.values(pallets[id] || {}).reduce((a, b) => a + b, 0);
+    const tab = document.createElement('div'); tab.className = `pallet-tab ${id === activePalletId ? 'active' : ''}`; tab.onclick = () => selectPallet(id);
+    tab.innerHTML = `<span>Pallet #${id} (${totalBoxes})</span>`;
+    if (totalBoxes === 0 && Object.keys(pallets).length > 1) {
+      const btn = document.createElement('button'); btn.className = 'tab-close-btn'; btn.innerHTML = '&times;'; btn.onclick = (e) => deletePallet(id, e); tab.appendChild(btn);
+    }
+    container.appendChild(tab);
+  });
+  document.getElementById('activePalletLabel').textContent = `Pallet #${activePalletId}`;
+}
+
+function renderCurrentPalletTable() {
+  const tbody = document.getElementById('palletTableBody'); tbody.innerHTML = '';
+  const currentItems = pallets[activePalletId] || {}; let totalBoxes = 0;
+  if (Object.keys(currentItems).length === 0) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Empty pallet.</td></tr>';
+  else {
+    for (const sku in currentItems) {
+      totalBoxes += currentItems[sku];
+      tbody.innerHTML += `<tr><td><b>${sku}</b></td><td>${orderData[sku]?.name || '-'}</td><td style="text-align:center;"><b>${currentItems[sku]}</b></td><td style="text-align:center;"><button class="btn-danger btn-sm" onclick="removeOne('${sku}')">-1</button></td></tr>`;
+    }
+  }
+  document.getElementById('palletCartonCount').textContent = totalBoxes;
+}
+
+function removeOne(sku) {
+  if (pallets[activePalletId] && pallets[activePalletId][sku] > 0) {
+    pallets[activePalletId][sku]--; orderData[sku].packedQty--;
+    if (pallets[activePalletId][sku] === 0) delete pallets[activePalletId][sku];
+    renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+  }
+}
+
+function renderOrderTable() {
+  const tbody = document.getElementById('orderTableBody'); tbody.innerHTML = '';
+  let sumTarget = 0, sumPacked = 0;
+  if (Object.keys(orderData).length === 0) return tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No data</td></tr>';
+  
+  for (const sku in orderData) {
+    const it = orderData[sku]; sumTarget += it.targetQty; sumPacked += it.packedQty;
+    const isDone = it.packedQty >= it.targetQty;
+    tbody.innerHTML += `<tr><td><b>${sku}</b></td><td>${it.name}</td><td style="text-align:center;">${it.targetQty}</td><td style="text-align:center;"><b>${it.packedQty}</b></td><td style="text-align:center; color:${isDone ? 'gray':'red'};"><b>${it.targetQty - it.packedQty}</b></td><td style="text-align:center;"><span class="badge ${isDone ? 'badge-complete':'badge-pending'}">${isDone ? 'DONE':'PENDING'}</span></td></tr>`;
+  }
+  document.getElementById('totalPackedSum').textContent = sumPacked; document.getElementById('totalTargetSum').textContent = sumTarget; document.getElementById('packedOverview').textContent = `${sumPacked} / ${sumTarget} Cartons`;
+}
+
+function verifyCompletion() {
+  let missing = 0; for (const sku in orderData) missing += Math.max(0, orderData[sku].targetQty - orderData[sku].packedQty);
+  if (missing > 0) showBanner(`${missing} cartons remaining!`, "error"); else showBanner(`All cartons packed!`, "success");
+}
+
+function exportCurrentPallet() {
+  const skus = Object.keys(pallets[activePalletId] || {});
+  if (!skus.length) return showBanner("Pallet is empty!", "error");
+  const data = skus.map(sku => ({ 'Pallet ID': `Pallet #${activePalletId}`, 'SKU': sku, 'Name': orderData[sku].name, 'Qty': pallets[activePalletId][sku] }));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), `Pallet_${activePalletId}`); XLSX.writeFile(wb, `Pallet_${activePalletId}_Packing.xlsx`);
+}
+
+function exportAllPallets() {
+  const data = []; Object.keys(pallets).forEach(id => { for (const sku in pallets[id]) data.push({ 'Pallet ID': `Pallet #${id}`, 'SKU': sku, 'Name': orderData[sku].name, 'Qty': pallets[id][sku] }); });
+  if (!data.length) return showBanner("No data to export", "error");
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Summary"); XLSX.writeFile(wb, "All_Pallets_Packing.xlsx");
+}
+</script>
+</body>
+</html>
