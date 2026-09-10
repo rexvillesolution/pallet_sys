@@ -54,6 +54,7 @@
   .pallet-tabs-container { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 10px; }
   .pallet-tab { display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; user-select: none; }
   .pallet-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .pallet-tab.locked { border-color: var(--warning); }
   .pallet-tab .tab-close-btn { background: transparent; border: none; color: inherit; font-size: 14px; line-height: 1; padding: 2px 4px; margin-left: 4px; border-radius: 4px; cursor: pointer; font-weight: bold; }
   
   .table-wrapper { overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
@@ -72,7 +73,6 @@
   <div class="top-bar">
     <div class="top-title"><span>📦 FBA Packing & Picking System</span></div>
     <div class="top-actions">
-      <!-- 新增 Full Screen 按鈕 -->
       <button class="btn-dark" onclick="toggleFullScreen()">⛶ Full Screen</button>
       <input type="file" id="orderFileInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importOrderFile(event)">
       <button class="btn-outline" onclick="document.getElementById('orderFileInput').click()">📥 Import Order Excel</button>
@@ -99,7 +99,8 @@
       <div class="panel-header">
         <div><span class="panel-title">🪵 Current Pallet</span><span style="font-size:12px; color:var(--text-muted); margin-left:6px;"> (<span id="palletCartonCount">0</span> cartons)</span></div>
         <div style="display:flex; gap:6px;">
-          <button class="btn-outline btn-sm" onclick="exportCurrentPallet()">Export</button>
+          <!-- 需求2: LOCK 按鈕放在 + New Pallet 左手邊 -->
+          <button id="lockPalletBtn" class="btn-outline btn-sm" onclick="toggleLockCurrentPallet()">🔒 Lock Pallet</button>
           <button class="btn-success btn-sm" onclick="createNewPallet()">+ New Pallet</button>
         </div>
       </div>
@@ -130,11 +131,11 @@
 <script>
 let orderData = {}; 
 let pallets = { 1: {} }; 
+let palletLocks = {}; // 記錄各卡板的鎖定狀態: { 1: false, 2: true, ... }
 let activePalletId = 1;
 let pickingListData = []; 
 let audioContext = null;
 
-// 切換全螢幕邏輯（相容 Android Chrome 與 WebKit）
 function toggleFullScreen() {
   if (!document.fullscreenElement && !document.webkitFullscreenElement) {
     const docEl = document.documentElement;
@@ -169,8 +170,12 @@ function showBanner(message, type = 'error') {
   banner.innerHTML = `<span>⚠️ ${message}</span>`;
   banner.style.display = 'block';
   playBeep(type);
+  refocusBarcode();
+}
+
+function refocusBarcode() {
   const input = document.getElementById('barcodeInput');
-  input.focus(); input.select();
+  if (input) { input.focus(); input.select(); }
 }
 
 function importOrderFile(event) {
@@ -188,10 +193,9 @@ function importOrderFile(event) {
 
       if (!rows || rows.length === 0) return showBanner("No data found.", "error");
 
-      orderData = {}; pallets = { 1: {} }; activePalletId = 1; pickingListData = [];
+      orderData = {}; pallets = { 1: {} }; palletLocks = { 1: false }; activePalletId = 1; pickingListData = [];
       let tempPickMap = {};
 
-      // 1. Calculate precise SKU carton counts and save exactly ONE raw location string per SKU
       rows.forEach(r => {
         const sku = (r['商品编码'] || r['SKU'] || r['Item Code']).toString().trim();
         const boxNo = (r['箱号'] || r['Carton No'] || '').toString().trim();
@@ -211,7 +215,6 @@ function importOrderFile(event) {
         if (boxNo) orderData[sku].boxNumbers.add(boxNo);
       });
 
-      // 2. Parse the location string once per SKU for the Picking List
       for (const sku in orderData) {
         const data = orderData[sku];
         let locStr = data.rawLoc.replace(/库位：/g, '').trim();
@@ -235,11 +238,12 @@ function importOrderFile(event) {
         return a.sku.localeCompare(b.sku);
       });
 
-      renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+      renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable(); updateLockBtnState();
       showBanner(`Imported Data. Ready to pack!`, "success");
     } catch (err) { showBanner("Parse error: " + err.message, "error"); }
   };
   reader.readAsArrayBuffer(file);
+  event.target.value = '';
 }
 
 function addPickingItem(map, sku, name, loc, qty) {
@@ -295,6 +299,12 @@ function resolveSku(input) {
 function handleScan() {
   const input = document.getElementById('barcodeInput'); const scanned = input.value.trim(); input.value = ''; 
   if (!scanned) return; if (Object.keys(orderData).length === 0) return showBanner("Please import order file!", "error");
+  
+  // 需求2防護: 若當前板位被鎖定，禁止掃描放入
+  if (palletLocks[activePalletId]) {
+    return showBanner(`Pallet #${activePalletId} is LOCKED! Unlock it first to pack.`, "error");
+  }
+
   const sku = resolveSku(scanned);
   if (!sku) return showBanner(`Unrecognized barcode: "${scanned}"`, "error");
   
@@ -303,58 +313,136 @@ function handleScan() {
 
   item.packedQty++; if (!pallets[activePalletId]) pallets[activePalletId] = {};
   pallets[activePalletId][sku] = (pallets[activePalletId][sku] || 0) + 1;
-  showBanner(`Added 1 carton: ${sku}`, "success");
+
   renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+
+  let totalTarget = 0, totalPacked = 0;
+  for (const s in orderData) {
+    totalTarget += orderData[s].targetQty;
+    totalPacked += orderData[s].packedQty;
+  }
+
+  if (totalTarget > 0 && totalPacked === totalTarget) {
+    showBanner("🎉 All cartons have been completely packed!", "success");
+  } else {
+    showBanner(`Added 1 carton: ${sku}`, "success");
+  }
+}
+
+// 需求2: 切換當前卡板鎖定狀態
+function toggleLockCurrentPallet() {
+  palletLocks[activePalletId] = !palletLocks[activePalletId];
+  updateLockBtnState();
+  renderPalletTabs();
+  renderCurrentPalletTable();
+  if (palletLocks[activePalletId]) {
+    showBanner(`Pallet #${activePalletId} is now LOCKED.`, "success");
+  } else {
+    showBanner(`Pallet #${activePalletId} is UNLOCKED.`, "success");
+  }
+  refocusBarcode();
+}
+
+function updateLockBtnState() {
+  const btn = document.getElementById('lockPalletBtn');
+  if (palletLocks[activePalletId]) {
+    btn.innerHTML = '🔓 Unlock';
+    btn.className = 'btn-warning btn-sm';
+  } else {
+    btn.innerHTML = '🔒 Lock Pallet';
+    btn.className = 'btn-outline btn-sm';
+  }
 }
 
 function createNewPallet() {
   const nextId = Object.keys(pallets).length > 0 ? Math.max(...Object.keys(pallets).map(Number)) + 1 : 1;
-  pallets[nextId] = {}; activePalletId = nextId; renderPalletTabs(); renderCurrentPalletTable();
+  pallets[nextId] = {}; 
+  palletLocks[nextId] = false; 
+  activePalletId = nextId; 
+  renderPalletTabs(); 
+  renderCurrentPalletTable();
+  updateLockBtnState();
+  refocusBarcode();
 }
 
-function selectPallet(id) { activePalletId = id; renderPalletTabs(); renderCurrentPalletTable(); document.getElementById('barcodeInput').focus(); }
+function selectPallet(id) { 
+  activePalletId = id; 
+  renderPalletTabs(); 
+  renderCurrentPalletTable(); 
+  updateLockBtnState();
+  refocusBarcode(); 
+}
 
 function deletePallet(id, event) {
   event.stopPropagation();
+  if (palletLocks[id]) return showBanner(`Cannot delete Pallet #${id} because it is LOCKED!`, "error");
   const count = Object.values(pallets[id] || {}).reduce((s, q) => s + q, 0);
   if (count > 0) return showBanner(`Pallet #${id} is not empty!`, "error");
   if (Object.keys(pallets).length <= 1) return showBanner(`Cannot delete last pallet.`, "error");
-  delete pallets[id]; if (activePalletId === id) activePalletId = Number(Object.keys(pallets)[0]);
-  renderPalletTabs(); renderCurrentPalletTable();
+  delete pallets[id]; 
+  delete palletLocks[id];
+  if (activePalletId === id) activePalletId = Number(Object.keys(pallets)[0]);
+  renderPalletTabs(); 
+  renderCurrentPalletTable();
+  updateLockBtnState();
+  refocusBarcode();
 }
 
 function renderPalletTabs() {
   const container = document.getElementById('palletTabsContainer'); container.innerHTML = '';
   Object.keys(pallets).map(Number).sort((a,b)=>a-b).forEach(id => {
     const totalBoxes = Object.values(pallets[id] || {}).reduce((a, b) => a + b, 0);
-    const tab = document.createElement('div'); tab.className = `pallet-tab ${id === activePalletId ? 'active' : ''}`; tab.onclick = () => selectPallet(id);
-    tab.innerHTML = `<span>Pallet #${id} (${totalBoxes})</span>`;
-    if (totalBoxes === 0 && Object.keys(pallets).length > 1) {
+    const isLocked = !!palletLocks[id];
+    const tab = document.createElement('div'); 
+    tab.className = `pallet-tab ${id === activePalletId ? 'active' : ''} ${isLocked ? 'locked' : ''}`; 
+    tab.onclick = () => selectPallet(id);
+    tab.innerHTML = `<span>${isLocked ? '🔒 ' : ''}Pallet #${id} (${totalBoxes})</span>`;
+    
+    if (totalBoxes === 0 && Object.keys(pallets).length > 1 && !isLocked) {
       const btn = document.createElement('button'); btn.className = 'tab-close-btn'; btn.innerHTML = '&times;'; btn.onclick = (e) => deletePallet(id, e); tab.appendChild(btn);
     }
     container.appendChild(tab);
   });
-  document.getElementById('activePalletLabel').textContent = `Pallet #${activePalletId}`;
+  const isCurrentLocked = !!palletLocks[activePalletId];
+  document.getElementById('activePalletLabel').innerHTML = `Pallet #${activePalletId} ${isCurrentLocked ? '<span style="color:var(--danger);">(LOCKED)</span>' : ''}`;
 }
 
 function renderCurrentPalletTable() {
   const tbody = document.getElementById('palletTableBody'); tbody.innerHTML = '';
   const currentItems = pallets[activePalletId] || {}; let totalBoxes = 0;
+  const isLocked = !!palletLocks[activePalletId];
+
   if (Object.keys(currentItems).length === 0) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Empty pallet.</td></tr>';
   else {
     for (const sku in currentItems) {
       totalBoxes += currentItems[sku];
-      tbody.innerHTML += `<tr><td><b>${sku}</b></td><td>${orderData[sku]?.name || '-'}</td><td style="text-align:center;"><b>${currentItems[sku]}</b></td><td style="text-align:center;"><button class="btn-danger btn-sm" onclick="removeOne('${sku}')">-1</button></td></tr>`;
+      tbody.innerHTML += `<tr>
+        <td><b>${sku}</b></td>
+        <td>${orderData[sku]?.name || '-'}</td>
+        <td style="text-align:center;"><b>${currentItems[sku]}</b></td>
+        <td style="text-align:center;">
+          <button class="btn-danger btn-sm" ${isLocked ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : ''} onclick="removeOne('${sku}')">-1</button>
+        </td>
+      </tr>`;
     }
   }
   document.getElementById('palletCartonCount').textContent = totalBoxes;
 }
 
 function removeOne(sku) {
+  if (palletLocks[activePalletId]) {
+    return showBanner(`Pallet #${activePalletId} is LOCKED! Cannot modify items.`, "error");
+  }
   if (pallets[activePalletId] && pallets[activePalletId][sku] > 0) {
+    const ok = confirm(`Are you sure you want to remove 1 carton of SKU: ${sku}?`);
+    if (!ok) {
+      refocusBarcode();
+      return;
+    }
     pallets[activePalletId][sku]--; orderData[sku].packedQty--;
     if (pallets[activePalletId][sku] === 0) delete pallets[activePalletId][sku];
     renderPalletTabs(); renderCurrentPalletTable(); renderOrderTable();
+    refocusBarcode();
   }
 }
 
@@ -376,18 +464,74 @@ function verifyCompletion() {
   if (missing > 0) showBanner(`${missing} cartons remaining!`, "error"); else showBanner(`All cartons packed!`, "success");
 }
 
-function exportCurrentPallet() {
-  const skus = Object.keys(pallets[activePalletId] || {});
-  if (!skus.length) return showBanner("Pallet is empty!", "error");
-  const data = skus.map(sku => ({ 'Pallet ID': `Pallet #${activePalletId}`, 'SKU': sku, 'Name': orderData[sku].name, 'Qty': pallets[activePalletId][sku] }));
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), `Pallet_${activePalletId}`); XLSX.writeFile(wb, `Pallet_${activePalletId}_Packing.xlsx`);
+// 需求1: 在 Pallet 標題旁顯示該卡板總數 (Total: X)
+function exportAllPallets() {
+  const palletIds = Object.keys(pallets).map(Number).sort((a, b) => a - b);
+  let hasData = false;
+  for (const id of palletIds) {
+    if (Object.keys(pallets[id] || {}).length > 0) { hasData = true; break; }
+  }
+  if (!hasData) return showBanner("No data to export", "error");
+
+  let maxSkuRows = 0;
+  palletIds.forEach(id => {
+    const count = Object.keys(pallets[id] || {}).length;
+    if (count > maxSkuRows) maxSkuRows = count;
+  });
+
+  const aoa = [];
+  const totalRows = 2 + maxSkuRows;
+  for (let r = 0; r < totalRows; r++) {
+    aoa.push([]);
+  }
+
+  palletIds.forEach((id, pIndex) => {
+    const colStart = pIndex * 3; // 每個卡板佔用 2 欄 (SKU, Qty) + 1 欄間隔空列
+    
+    // 計算該板總箱數
+    const palletTotalBoxes = Object.values(pallets[id] || {}).reduce((a, b) => a + b, 0);
+
+    // 需求1: 顯示例如 Pallet #1 (Total: 25)
+    aoa[0][colStart] = `Pallet #${id} (Total: ${palletTotalBoxes})`;
+    aoa[0][colStart + 1] = "";
+    aoa[0][colStart + 2] = "";
+
+    aoa[1][colStart] = "SKU";
+    aoa[1][colStart + 1] = "Qty";
+    aoa[1][colStart + 2] = "";
+
+    const skuList = Object.keys(pallets[id] || {});
+    for (let i = 0; i < maxSkuRows; i++) {
+      const rowIndex = 2 + i;
+      if (i < skuList.length) {
+        const sku = skuList[i];
+        aoa[rowIndex][colStart] = sku;
+        aoa[rowIndex][colStart + 1] = pallets[id][sku];
+      } else {
+        aoa[rowIndex][colStart] = "";
+        aoa[rowIndex][colStart + 1] = "";
+      }
+      aoa[rowIndex][colStart + 2] = "";
+    }
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Pallets_Summary");
+  XLSX.writeFile(wb, "All_Pallets_Packing.xlsx");
 }
 
-function exportAllPallets() {
-  const data = []; Object.keys(pallets).forEach(id => { for (const sku in pallets[id]) data.push({ 'Pallet ID': `Pallet #${id}`, 'SKU': sku, 'Name': orderData[sku].name, 'Qty': pallets[id][sku] }); });
-  if (!data.length) return showBanner("No data to export", "error");
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Summary"); XLSX.writeFile(wb, "All_Pallets_Packing.xlsx");
-}
+document.addEventListener('click', function(e) {
+  if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a') || e.target.closest('.pallet-tab')) {
+    return;
+  }
+  refocusBarcode();
+});
+
+window.onload = function() {
+  refocusBarcode();
+  updateLockBtnState();
+};
 </script>
 </body>
 </html>
